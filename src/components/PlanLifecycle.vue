@@ -3,24 +3,26 @@
     <h2>Plan Version</h2>
 
     <div class="row">
-      <input v-model="planCode" placeholder="plan code, e.g. PV-2026-Q2" />
-      <input v-model="requestedBy" placeholder="requested by" />
+      <input v-model="planCode" placeholder="plan code, e.g. PV-2026-0001" />
       <button @click="create">Create</button>
     </div>
 
     <div v-if="plan" class="plan-summary">
       <p><strong>id:</strong> {{ plan.id }}</p>
-      <p><strong>state:</strong> {{ plan.state }}</p>
+      <p><strong>state:</strong> {{ plan.state }} (revision {{ plan.revision }})</p>
       <p><strong>requested_by:</strong> {{ plan.requested_by }}</p>
       <p v-if="plan.approved_by"><strong>approved_by:</strong> {{ plan.approved_by }}</p>
+      <p v-if="plan.recompute_workflow_id">
+        <strong>recompute workflow:</strong> <code>{{ plan.recompute_workflow_id }}</code>
+      </p>
 
       <div class="row">
-        <input v-model="actor" placeholder="acting as" />
-        <button @click="act('submit')" :disabled="plan.state !== 'Draft'">Submit</button>
-        <button @click="act('approve')" :disabled="plan.state !== 'In-Review'">Approve</button>
-        <button @click="act('reject')" :disabled="plan.state !== 'In-Review'">Reject</button>
-        <button @click="act('lock')" :disabled="plan.state !== 'Approved'">Lock</button>
+        <button @click="act('submit')">Submit</button>
+        <button @click="act('approve')">Approve</button>
+        <button @click="act('reject')">Reject</button>
+        <button @click="act('lock')">Lock</button>
       </div>
+      <p class="hint">You act as the API key's holder. The API decides whether that identity may make the move.</p>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -28,7 +30,7 @@
 </template>
 
 <script>
-import { api } from '../api'
+import { api, errorText } from '../api'
 
 export default {
   name: 'PlanLifecycle',
@@ -36,8 +38,6 @@ export default {
   data() {
     return {
       planCode: '',
-      requestedBy: 'alice',
-      actor: 'bob',
       plan: null,
       error: null,
     }
@@ -46,26 +46,21 @@ export default {
     async create() {
       this.error = null
       try {
-        const resp = await api.post('/plan-versions', {
-          plan_code: this.planCode,
-          requested_by: this.requestedBy,
-        })
+        const resp = await api.post('/plan-versions', { plan_code: this.planCode })
         this.plan = resp.data
         this.$emit('plan-updated', this.plan)
       } catch (e) {
-        this.error = e.response ? e.response.data.detail : e.message
+        this.error = errorText(e)
       }
     },
     async act(action) {
       this.error = null
       try {
-        const resp = await api.post(`/plan-versions/${this.plan.id}/${action}`, {
-          actor: this.actor,
-        })
+        const resp = await api.post(`/plan-versions/${this.plan.id}/${action}`)
         this.plan = resp.data
         this.$emit('plan-updated', this.plan)
       } catch (e) {
-        this.error = e.response ? e.response.data.detail : e.message
+        this.error = errorText(e)
       }
     },
   },
@@ -88,6 +83,10 @@ export default {
 }
 input {
   padding: 0.3rem;
+}
+.hint {
+  font-size: 0.85rem;
+  color: #555;
 }
 .error {
   color: #b00020;

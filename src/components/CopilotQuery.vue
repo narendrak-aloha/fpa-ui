@@ -3,24 +3,40 @@
     <h2>Copilot</h2>
 
     <div class="row">
-      <input v-model="apiKey" placeholder="API key" />
-      <input v-model="question" placeholder="e.g. What was Q2 revenue for Poland?" class="wide" />
+      <input v-model="question" placeholder="e.g. Why did Poland miss its services revenue in Q2 2026?" class="wide" />
       <button @click="ask" :disabled="loading">{{ loading ? 'Asking...' : 'Ask' }}</button>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
 
-    <div v-if="answer" class="answer-layout">
-      <div class="answer">
-        <h3>Answer</h3>
-        <p>{{ answer.answer }}</p>
-        <p v-if="answer.drift_flag" class="drift">⚠ vintage drift detected</p>
+    <div v-if="result">
+      <div v-if="result.status === 'paused'" class="paused">
+        <strong>Paused for human confirmation.</strong> Nothing has been recorded yet.
+        <div v-for="(p, i) in result.pending_confirmations" :key="i">
+          {{ p.member_id }} wants to call <code>{{ p.tool }}</code> with <code>{{ JSON.stringify(p.arguments) }}</code>
+        </div>
       </div>
-      <div class="citations">
-        <h3>DSL / citations</h3>
-        <div v-for="(c, i) in answer.citations" :key="i" class="citation">
-          <code>{{ c.dsl }}</code>
-          <pre>{{ c.row }}</pre>
+
+      <div class="answer-layout">
+        <div v-if="result.answer" class="answer">
+          <h3>Answer</h3>
+          <p>{{ result.answer.answer }}</p>
+          <p v-if="result.answer.drift_flag" class="drift">⚠ vintage drift detected</p>
+        </div>
+        <div class="dsl">
+          <h3>DSL the agent ran</h3>
+          <p v-if="!result.trace.length" class="hint">No query was run.</p>
+          <div v-for="(t, i) in result.trace" :key="'t' + i" class="citation">
+            <span class="meta">{{ t.member_id }} &middot; vintage {{ t.vintage === null ? 'latest' : t.vintage }} &middot; {{ t.row_count }} rows</span>
+            <code>{{ t.dsl }}</code>
+          </div>
+          <template v-if="result.answer && result.answer.citations.length">
+            <h3>Cited rows</h3>
+            <div v-for="(c, i) in result.answer.citations" :key="'c' + i" class="citation">
+              <code>{{ c.dsl }}</code>
+              <pre>{{ c.row }}</pre>
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -28,15 +44,14 @@
 </template>
 
 <script>
-import { api } from '../api'
+import { api, errorText } from '../api'
 
 export default {
   name: 'CopilotQuery',
   data() {
     return {
-      apiKey: 'pl-planner-key',
       question: '',
-      answer: null,
+      result: null,
       error: null,
       loading: false,
     }
@@ -44,16 +59,13 @@ export default {
   methods: {
     async ask() {
       this.error = null
+      this.result = null
       this.loading = true
       try {
-        const resp = await api.post(
-          '/copilot/query',
-          { question: this.question },
-          { headers: { 'x-api-key': this.apiKey } }
-        )
-        this.answer = resp.data
+        const resp = await api.post('/copilot/query', { question: this.question })
+        this.result = resp.data
       } catch (e) {
-        this.error = e.response ? JSON.stringify(e.response.data) : e.message
+        this.error = errorText(e)
       } finally {
         this.loading = false
       }
@@ -84,13 +96,16 @@ export default {
   display: flex;
   gap: 1rem;
   align-items: flex-start;
+  flex-wrap: wrap;
 }
 .answer {
   flex: 1;
+  min-width: 250px;
 }
-.citations {
+.dsl {
   flex: 1;
-  max-height: 300px;
+  min-width: 250px;
+  max-height: 360px;
   overflow-y: auto;
 }
 .citation {
@@ -105,11 +120,24 @@ export default {
   margin: 0.2rem 0 0;
   font-size: 0.8rem;
 }
+.meta {
+  font-size: 0.8rem;
+  color: #555;
+}
+.paused {
+  background: #fff8e1;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+}
 .drift {
   color: #b00020;
   font-weight: bold;
 }
 .error {
   color: #b00020;
+}
+.hint {
+  font-size: 0.85rem;
+  color: #555;
 }
 </style>

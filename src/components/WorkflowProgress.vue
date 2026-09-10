@@ -12,24 +12,43 @@
 
     <div v-if="progress">
       <p><strong>phase:</strong> {{ progress.phase }}</p>
+      <p><strong>requested by:</strong> {{ progress.requested_by }} &mdash; plan version {{ progress.plan_version_id }}, revision {{ progress.revision }}</p>
       <div class="bar">
         <div class="bar-fill" :style="{ width: fraction + '%' }"></div>
       </div>
       <p>{{ fraction }}% of dirty set evaluated</p>
+
+      <div class="row">
+        <input v-model="reason" placeholder="rejection reason (optional)" />
+        <button @click="signal('approve')">Approve recompute</button>
+        <button @click="signal('reject')">Reject recompute</button>
+      </div>
+      <p class="hint">
+        Nothing publishes -- and no variance report is written -- until a controller other than the requester
+        approves. The wait expires on a timeout.
+      </p>
+      <p v-if="actionError" class="error">{{ actionError }}</p>
+      <p v-if="signalled" class="hint">signalled: {{ signalled }}</p>
     </div>
   </section>
 </template>
 
 <script>
-import { api } from '../api'
+import { api, errorText } from '../api'
 
 export default {
   name: 'WorkflowProgress',
+  props: {
+    initialWorkflowId: { type: String, default: '' },
+  },
   data() {
     return {
-      workflowId: '',
+      workflowId: this.initialWorkflowId,
+      reason: '',
       progress: null,
       error: null,
+      actionError: null,
+      signalled: null,
       polling: false,
       timer: null,
     }
@@ -40,10 +59,34 @@ export default {
       return Math.round(this.progress.dirty_set_fraction_complete * 100)
     },
   },
+  watch: {
+    initialWorkflowId(v) {
+      if (!v) return
+      this.stop()
+      this.workflowId = v
+      this.progress = null
+      this.signalled = null
+      this.error = null
+      this.actionError = null
+    },
+  },
   beforeUnmount() {
     this.stop()
   },
   methods: {
+    async signal(action) {
+      this.actionError = null
+      const body = action === 'reject' ? { reason: this.reason } : {}
+      try {
+        await api.post(`/workflows/${this.workflowId}/${action}`, body)
+        this.signalled = action
+        this.poll()
+      } catch (e) {
+        // Kept apart from the poll's error so the next successful poll
+        // doesn't wipe the API's refusal off the screen.
+        this.actionError = errorText(e)
+      }
+    },
     start() {
       if (!this.workflowId) return
       this.polling = true
@@ -58,12 +101,13 @@ export default {
       }
     },
     async poll() {
-      this.error = null
       try {
         const resp = await api.get(`/workflows/${this.workflowId}/progress`)
         this.progress = resp.data
+        this.error = null
+        if (this.progress.phase === 'done') this.stop()
       } catch (e) {
-        this.error = e.response ? JSON.stringify(e.response.data) : e.message
+        this.error = errorText(e)
         this.stop()
       }
     },
@@ -103,5 +147,9 @@ export default {
 }
 .error {
   color: #b00020;
+}
+.hint {
+  font-size: 0.85rem;
+  color: #555;
 }
 </style>
