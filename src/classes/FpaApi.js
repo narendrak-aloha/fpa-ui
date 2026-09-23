@@ -103,6 +103,11 @@ export default class FpaApi {
     return this.request(`v1/reforecast/${encodeURIComponent(code)}/progress`)
   }
 
+  // Past and present runs from the durable record, newest first
+  getRuns(code) {
+    return this.request(`v1/reforecast/${encodeURIComponent(code)}/runs`)
+  }
+
   decideRun(code, { approved, comment }) {
     return this.request(`v1/reforecast/${encodeURIComponent(code)}/decision`, 'POST', {
       body: { approved, comment },
