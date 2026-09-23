@@ -472,6 +472,9 @@ export default {
         return
       }
       const progress = response.data
+      // Watching a successor answers with the run that drafted it; decisions,
+      // cancels and the outcome belong to that run's key, not the successor's.
+      if (progress.run_plan_version_code) this.runCode = progress.run_plan_version_code
       this.progress = progress
       this.progressText = ''
       this.successorCode = progress.target_version_code || null

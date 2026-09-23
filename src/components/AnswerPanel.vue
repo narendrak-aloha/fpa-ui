@@ -247,6 +247,23 @@ export default {
         : ''
     },
 
+    // Which team member's output carried the executed DSL, by its stable id
+    dslProducer() {
+      const trace = this.answer.member_trace
+      if (!trace?.produced_by?.id) return ''
+      const { id, name } = trace.produced_by
+      return name && name !== id ? `${name} (${id})` : id
+    },
+
+    // Leader, then each member it delegated to, with the tools each called
+    delegation() {
+      const trace = this.answer.member_trace
+      if (!trace) return ''
+      const step = (entry) =>
+        `${entry.name || entry.id}${entry.tools?.length ? ` [${entry.tools.join(', ')}]` : ''}`
+      return [trace.leader, ...(trace.members || [])].filter(Boolean).map(step).join(' → ')
+    },
+
     details() {
       const mode = this.result.mode
       const answeredBy =
@@ -258,6 +275,8 @@ export default {
       const duration = describeDuration(this.result.duration_ms)
       return [
         ['Answered by', answeredBy],
+        ...(this.dslProducer ? [['DSL written by', this.dslProducer]] : []),
+        ...(this.delegation ? [['Team trace', this.delegation]] : []),
         ['Result', this.status],
         ['Rows returned', String(this.rows.length)],
         ...(duration ? [['Time taken', duration]] : []),
