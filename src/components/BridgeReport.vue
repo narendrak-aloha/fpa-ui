@@ -1,7 +1,7 @@
 <template>
   <section class="rounded-lg border bg-surface-white">
     <div class="flex flex-wrap items-center justify-between gap-3 border-b p-4">
-      <h2 class="font-semibold text-ink-gray-9">Variance bridge · USD</h2>
+      <h2 class="font-semibold text-ink-gray-9">{{ title }}</h2>
       <p class="text-sm text-ink-gray-6">{{ statusLine }}</p>
     </div>
 
@@ -20,7 +20,7 @@
         <svg
           v-bind:viewBox="`0 0 ${bars.length * 99 + 20} 255`"
           role="img"
-          aria-label="Variance waterfall from plan to actual, in USD"
+          v-bind:aria-label="`Waterfall from ${anchors[0]} to ${anchors[1]}, in USD`"
           class="min-w-[640px]"
         >
           <g v-for="(bar, index) in bars" v-bind:key="bar.label">
@@ -52,6 +52,9 @@
           v-bind:selected-path="selectedPath"
           v-on:select="select"
         />
+        <p v-if="!report.report_id" class="mt-2 text-xs text-ink-gray-6">
+          Source rows can be drilled into once this comparison is saved as a variance report.
+        </p>
       </div>
 
       <div v-if="citations" class="border-t p-4">
@@ -87,7 +90,13 @@ export default {
 
   props: {
     // { dsl, nonce }: nonce changes even when the same DSL is run again
-    request: { type: Object, required: true },
+    request: { type: Object, default: null },
+    // A report already computed by the server (e.g. a re-forecast's impact);
+    // shown as-is instead of running a DSL.
+    preloaded: { type: Object, default: null },
+    title: { type: String, default: 'Variance bridge · USD' },
+    // The two ends of the waterfall
+    anchors: { type: Array, default: () => ['Plan', 'Actual'] },
   },
 
   data() {
@@ -106,6 +115,9 @@ export default {
     statusLine() {
       if (!this.report) return ''
       const vintage = this.report.vintage || {}
+      if (vintage.vintage == null) {
+        return `${this.report.status} · ${vintage.note || 'not a ledger read'} · all levels tie: ${this.report.ties}`
+      }
       return `${this.report.status} · vintage ${vintage.vintage} · ${vintage.closed_at} · all levels tie: ${this.report.ties}`
     },
 
@@ -118,13 +130,13 @@ export default {
       const node = this.selectedNode
       if (!node) return []
       let running = Number(node.plan_amount)
-      const steps = [{ label: 'Plan', from: 0, to: running, value: node.plan_amount }]
+      const steps = [{ label: this.anchors[0], from: 0, to: running, value: node.plan_amount }]
       for (const leg of LEGS) {
         const next = running + Number(node[leg])
         steps.push({ label: niceName(leg), from: running, to: next, value: node[leg] })
         running = next
       }
-      steps.push({ label: 'Actual', from: 0, to: Number(node.actual_amount), value: node.actual_amount })
+      steps.push({ label: this.anchors[1], from: 0, to: Number(node.actual_amount), value: node.actual_amount })
 
       const bounds = steps.flatMap((step) => [step.from, step.to])
       const min = Math.min(0, ...bounds)
@@ -147,6 +159,17 @@ export default {
   },
 
   watch: {
+    preloaded: {
+      immediate: true,
+      handler(report) {
+        if (!report) return
+        this.report = report
+        this.selectedNode = report.root
+        this.citations = ''
+        this.errorMessage = ''
+      },
+    },
+
     request: {
       immediate: true,
       handler(request) {
@@ -175,7 +198,7 @@ export default {
       this.selectedNode = node
       this.citations = ''
       this.nextOffset = 0
-      this.loadCitations(node)
+      if (this.report.report_id) this.loadCitations(node)
     },
 
     // Paged: a node can stand on thousands of ledger lines.

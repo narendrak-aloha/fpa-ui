@@ -129,3 +129,16 @@ export function decideProposalBlocker(user, proposal) {
   if (proposal.state !== 'PENDING') return `Already ${proposal.state.toLowerCase()}`
   return ''
 }
+
+// Why this plan is waiting on this user, or '' when it is not. Advisory only:
+// it sorts the plan list, and the buttons and the server still decide.
+export function planAttention(user, plan) {
+  const mine = isRequester(user, plan.requested_by)
+  if (plan.state === 'IN_REVIEW' && !mine) {
+    if (user.hasRole('controller') && !plan.covenant_ok) return 'Covenant review'
+    if (user.hasRole('controller') || user.hasRole('cfo')) return 'Awaiting decision'
+  }
+  if (plan.state === 'APPROVED' && user.hasRole('cfo')) return 'Ready to lock'
+  if (['DRAFT', 'REJECTED'].includes(plan.state) && mine) return 'Your draft'
+  return ''
+}

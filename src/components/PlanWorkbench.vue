@@ -10,6 +10,15 @@
 
     <!-- The plan version, its state, and the reviewed verdict on it -->
     <div class="space-y-3 border-b p-4">
+      <PlanList
+        v-bind:plans="plans"
+        v-bind:loading="busy === 'plans'"
+        v-bind:error-message="plansError"
+        v-bind:selected-code="currentPlan?.plan_version_code || ''"
+        v-on:select="selectPlan"
+        v-on:refresh="loadPlans"
+      />
+
       <div class="flex flex-wrap items-end gap-3">
         <div class="w-64">
           <FormControl v-model="planCode" label="Plan version" />
@@ -40,9 +49,15 @@
       </div>
 
       <p v-if="!currentPlan" class="text-sm text-ink-gray-6">
-        Load a plan to see what you can do with it.
+        Pick a plan above, or load one by code, to see what you can do with it.
       </p>
       <template v-else>
+        <!-- The evidence sits next to the buttons it is evidence for -->
+        <ReforecastImpact
+          v-if="currentPlan.supersedes_plan_version_id"
+          v-bind:plan-code="currentPlan.plan_version_code"
+          v-bind:refresh-key="`${currentPlan.row_version}:${progress?.phase || ''}`"
+        />
         <div class="flex flex-wrap gap-2">
           <GuardedButton
             v-bind:blocker="covenantBlocker(true)"
@@ -85,8 +100,15 @@
     <!-- Shock a driver: this starts the durable workflow -->
     <div class="space-y-3 border-b p-4">
       <div class="flex flex-wrap items-end gap-3">
-        <div class="w-48">
-          <FormControl v-model="driverCode" label="Driver" />
+        <div class="w-64">
+          <FormControl
+            v-if="driverOptions.length"
+            v-model="driverCode"
+            type="select"
+            label="Driver"
+            v-bind:options="driverOptions"
+          />
+          <FormControl v-else v-model="driverCode" label="Driver" />
         </div>
         <div class="w-36">
           <FormControl v-model="fromValue" type="number" step="0.01" label="Current value" />
@@ -104,6 +126,15 @@
         </GuardedButton>
         <Button v-on:click="startWatching(watchTarget)">Watch {{ watchTarget }}</Button>
         <Button v-bind:disabled="!watching" v-on:click="stopWatching">Stop watching</Button>
+      </div>
+
+      <div class="w-full max-w-2xl">
+        <FormControl
+          v-model="shockReason"
+          type="textarea"
+          label="Why (kept with the run for whoever approves it)"
+          placeholder="e.g. Poland is missing its Q2 number; bench time is running higher than planned"
+        />
       </div>
 
       <RunTracker
@@ -124,6 +155,11 @@
         Review the successor's covenant before approving the run. Load the successor, record the
         verdict as a controller, then approve as the CFO.
       </p>
+      <ReforecastImpact
+        v-if="successorCode && currentPlan?.plan_version_code !== successorCode && progress?.phase === 'AWAITING_APPROVAL'"
+        v-bind:plan-code="successorCode"
+        v-bind:refresh-key="progress.phase"
+      />
       <div class="flex flex-wrap gap-2">
         <GuardedButton
           v-bind:blocker="successorCode ? '' : 'Watch a run until its successor is available'"
@@ -201,6 +237,8 @@
 <script>
 import { Badge, Button, ErrorMessage, FormControl } from 'frappe-ui'
 import GuardedButton from '@/components/GuardedButton.vue'
+import PlanList from '@/components/PlanList.vue'
+import ReforecastImpact from '@/components/ReforecastImpact.vue'
 import RunTracker from '@/components/RunTracker.vue'
 import {
   approveRunBlocker,
@@ -236,7 +274,16 @@ const STATE_THEMES = {
 export default {
   name: 'PlanWorkbench',
 
-  components: { Badge, Button, ErrorMessage, FormControl, GuardedButton, RunTracker },
+  components: {
+    Badge,
+    Button,
+    ErrorMessage,
+    FormControl,
+    GuardedButton,
+    PlanList,
+    ReforecastImpact,
+    RunTracker,
+  },
 
   data() {
     return {
@@ -245,7 +292,15 @@ export default {
       driverCode: 'utilisation',
       fromValue: 0.75,
       toValue: 0.74,
+      shockReason: '',
       proposalId: '',
+
+      // Read from the server so nobody has to know a code by heart. Either
+      // can fail for a token without global scope; the page still works by
+      // typed code then, and the server still decides.
+      plans: [],
+      plansError: '',
+      drivers: [],
 
       // The plan as last read. Its row_version is sent back with every write,
       // so an edit made against a stale copy is refused rather than silently
@@ -279,6 +334,19 @@ export default {
   computed: {
     user() {
       return this.$root.user
+    },
+
+    // One option per active driver code, from the registry
+    driverOptions() {
+      const seen = new Map()
+      for (const driver of this.drivers) {
+        if (driver.status !== 'ACTIVE' || seen.has(driver.driver_code)) continue
+        seen.set(driver.driver_code, {
+          label: `${driver.driver_code} — ${driver.driver_name}`,
+          value: driver.driver_code,
+        })
+      }
+      return [...seen.values()]
     },
 
     watching() {
@@ -333,6 +401,11 @@ export default {
     },
   },
 
+  mounted() {
+    this.loadPlans()
+    this.loadDrivers()
+  },
+
   beforeUnmount() {
     this.stopWatching()
   },
@@ -378,6 +451,27 @@ export default {
       return response.data
     },
 
+    async loadPlans() {
+      this.busy = 'plans'
+      const response = await this.$root.callAuthenticatedEndpoint('listPlanVersions')
+      if (this.busy === 'plans') this.busy = ''
+      this.plansError = response.error ? response.message : ''
+      if (!response.error) this.plans = response.data
+    },
+
+    async loadDrivers() {
+      const response = await this.$root.callAuthenticatedEndpoint('listDrivers')
+      if (response.error) return
+      this.drivers = response.data
+      const codes = this.driverOptions.map((option) => option.value)
+      if (codes.length && !codes.includes(this.driverCode)) this.driverCode = codes[0]
+    },
+
+    async selectPlan(code) {
+      this.planCode = code
+      await this.loadPlan()
+    },
+
     async loadPlan() {
       const plan = await this.run('load', 'getPlanVersion', this.planCode)
       if (!plan) return
@@ -389,6 +483,7 @@ export default {
     async createPlan() {
       if (await this.run('create', 'createPlanVersion', this.planCode)) {
         await this.loadPlan()
+        this.loadPlans()
         this.actionStatus = `Draft ${this.planCode} created.`
       }
     },
@@ -414,6 +509,7 @@ export default {
       })
       if (done) {
         await this.loadPlan()
+        this.loadPlans()
         this.actionStatus = `Plan moved to ${toState}.`
       }
     },
@@ -424,8 +520,10 @@ export default {
         driverCode: this.driverCode,
         fromValue: Number(this.fromValue),
         toValue: Number(this.toValue),
+        reason: this.shockReason.trim(),
       })
       if (!response) return
+      this.shockReason = ''
       // FOLDED_IN: a run was already going and its update handler took the
       // shock; detail says how. STARTED on a shock already applied finishes
       // at once with the earlier revision, which the tracker then shows.
@@ -477,6 +575,8 @@ export default {
       if (progress.run_plan_version_code) this.runCode = progress.run_plan_version_code
       this.progress = progress
       this.progressText = ''
+      // A new successor is a new row in the plan list
+      if (progress.target_version_code && progress.target_version_code !== this.successorCode) this.loadPlans()
       this.successorCode = progress.target_version_code || null
       this.noticeDecisionOutcome(progress)
 
@@ -492,6 +592,7 @@ export default {
       if (finished) {
         this.watchTimer = null
         await this.loadOutcome()
+        this.loadPlans()
         return
       }
       // Holds the slot so `watching` reads true until the timeout fires

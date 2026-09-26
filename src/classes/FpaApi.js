@@ -62,6 +62,25 @@ export default class FpaApi {
   // Plan versions and governance
   // ---------------------------------------------------------------------------
 
+  // Every plan version, oldest first, each with the code of the version it
+  // re-forecasts (supersedes_plan_version_code) when it is a successor.
+  listPlanVersions() {
+    return this.request('v1/plan-versions')
+  }
+
+  // The driver registry for the model: [{ driver_code, driver_name, status, ... }]
+  listDrivers(modelCode = 'FPA-2026') {
+    return this.request('v1/drivers', 'GET', { params: { model_code: modelCode } })
+  }
+
+  // For a re-forecast successor: the shocks, the planner's reasons, and the
+  // bridge from the baseline to this revision. Read-only.
+  getPlanImpact(code, scenario = 'base') {
+    return this.request(`v1/plan-versions/${encodeURIComponent(code)}/impact`, 'GET', {
+      params: { scenario },
+    })
+  }
+
   getPlanVersion(code) {
     return this.request(`v1/plan-versions/${encodeURIComponent(code)}`)
   }
@@ -88,13 +107,16 @@ export default class FpaApi {
   // Re-forecast (Temporal)
   // ---------------------------------------------------------------------------
 
-  startReforecast({ planVersionCode, driverCode, fromValue, toValue }) {
+  // reason is the planner's rationale; the server keeps it in the audit log for
+  // the approver and leaves it out of the computation.
+  startReforecast({ planVersionCode, driverCode, fromValue, toValue, reason = '' }) {
     return this.request('v1/reforecast', 'POST', {
       body: {
         plan_version_code: planVersionCode,
         driver_code: driverCode,
         from_value: fromValue,
         to_value: toValue,
+        reason,
       },
     })
   }
